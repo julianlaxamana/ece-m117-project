@@ -1,0 +1,5 @@
+# qwen3:8b with a 16k context window. AgentDojo prompts + tool outputs overflow
+# Ollama's 4k default, which silently truncates the conversation.
+# Build: ollama create qwen3-8b-16k -f ollama/qwen3-8b-16k.Modelfile
+FROM qwen3:8b
+PARAMETER num_ctx 16384
