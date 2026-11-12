@@ -55,3 +55,13 @@ A full suite under attack is (user tasks × injection tasks) agent runs, e.g. ba
 ## Known issues
 - `python -m agentdojo.scripts.check_suites` reports every user task as "not injectable". This is a bug in AgentDojo's checker (it ignores tool outputs in content-block format); the injections do reach the agent.
 - The checker also reports that ground truth fails for **workspace injection tasks 6–13** (new in v1.2). Their ASR numbers may be unreliable. Prefer `-it injection_task_0` … `injection_task_5` for workspace, or use the other suites.
+
+## Viewer (Next.js)
+
+`viz/` is a local web app that shows each run as a chat between the **attacker** (the planted payload), the **user**, the **target agent**, and its **tool results**. Planted text is highlighted inside tool outputs, and tool-call arguments that came from the payload (e.g. the attacker's IBAN) are flagged. It has a summary table (utility / attack success per model × defense × attack) and a step-by-step **Replay** for presenting.
+
+```bash
+cd viz && npm install && npm run dev   # http://localhost:3000
+```
+
+It reads `../runs` on every request (set `RUNS_DIR` to point elsewhere), so new benchmark results show up on refresh.
