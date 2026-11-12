@@ -1,4 +1,5 @@
-"""Run AgentDojo with any current model (Anthropic, OpenAI, or a local Ollama model).
+"""Run AgentDojo with any current model (Anthropic, OpenAI, a local Ollama model, or the
+`claude` CLI on a Claude subscription).
 
 AgentDojo's built-in CLI only knows a fixed list of older models. This wrapper builds
 the LLM element ourselves and hands it to AgentDojo's pipeline, so any model id works.
@@ -10,6 +11,9 @@ Examples:
     # With an attack and a defense
     uv run run_benchmark.py --provider anthropic --model claude-haiku-5-5 --suite workspace \
         --attack important_instructions --defense spotlighting_with_delimiting
+
+    # Through the `claude` CLI (subscription login, no API key); see claude_cli_llm.py
+    uv run run_benchmark.py --provider claude-cli --model claude-haiku-5-5 --suite workspace -ut user_task_0
 """
 
 import os
@@ -60,16 +64,54 @@ def build_llm(provider: str, model: str, reasoning_effort: str | None = None) ->
         client = openai.OpenAI(base_url=f"{host}/v1", api_key="ollama")
         llm = OpenAILLM(client, model, reasoning_effort=reasoning_effort)
         prose_name = "AI assistant"
+    elif provider == "claude-cli":
+        # Claude Code CLI with its system prompt and tools stripped; see claude_cli_llm.py.
+        from claude_cli_llm import make_claude_cli_llm
+
+        if reasoning_effort is not None:
+            raise click.BadParameter("--reasoning-effort isn't supported with claude-cli")
+        llm = make_claude_cli_llm(model)
+        prose_name = "Claude"
     else:
         raise click.BadParameter(f"unknown provider {provider}")
 
     # The name is also the results directory under runs/, so different reasoning
     # settings don't overwrite each other's cached results.
     llm.name = model if reasoning_effort is None else f"{model}-reasoning-{reasoning_effort}"
+    if provider == "claude-cli":  # keep apart from the same model run through the API
+        llm.name = f"{model}-via-cli"
     # Attacks like `important_instructions` address the model by name ("This is a message
     # to Claude..."). AgentDojo looks that up in a hardcoded table, so register our model.
     MODEL_NAMES.setdefault(model, prose_name)
+    llm.model_id = model  # the real id; llm.name may carry a suffix
+    llm.reasoning_effort_used = reasoning_effort
     return llm
+
+
+class _ClientWithDefaults:
+    """An OpenAI client stand-in that adds default kwargs to chat.completions.create."""
+
+    def __init__(self, client, **defaults):
+        create = client.chat.completions.create
+        completions = type("Completions", (), {"create": staticmethod(lambda **kw: create(**{**defaults, **kw}))})
+        self.chat = type("Chat", (), {"completions": completions})()
+
+
+def build_pipeline(llm: BasePipelineElement, defense: str | None) -> AgentPipeline:
+    pipeline = AgentPipeline.from_config(
+        PipelineConfig(llm=llm, model_id=None, defense=defense, system_message_name=None, system_message=None)
+    )
+    # AgentDojo's tool_filter defense calls the API with the pipeline's display name as the
+    # model id (404 when the name has our suffix) and without reasoning settings (so Qwen
+    # would "think" for minutes). Point it at the real model with the same settings.
+    from agentdojo.agent_pipeline.llms.openai_llm import OpenAILLMToolFilter
+
+    for element in pipeline.elements:
+        if isinstance(element, OpenAILLMToolFilter):
+            element.model = llm.model_id
+            if llm.reasoning_effort_used is not None:
+                element.client = _ClientWithDefaults(element.client, reasoning_effort=llm.reasoning_effort_used)
+    return pipeline
 
 
 def summarize(results: SuiteResults, attacked: bool) -> str:
@@ -83,7 +125,7 @@ def summarize(results: SuiteResults, attacked: bool) -> str:
 
 
 @click.command()
-@click.option("--provider", type=click.Choice(["anthropic", "openai", "ollama"]), required=True)
+@click.option("--provider", type=click.Choice(["anthropic", "openai", "ollama", "claude-cli"]), required=True)
 @click.option("--model", required=True, help="Model id, e.g. claude-haiku-5-5 or qwen3:8b")
 @click.option("--suite", "suites", multiple=True, default=("workspace",),
               help="workspace, travel, banking, slack (repeatable)")
@@ -101,9 +143,7 @@ def main(provider, model, suites, user_tasks, injection_tasks, attack, defense, 
          force_rerun):
     load_dotenv(".env")
     llm = build_llm(provider, model, reasoning_effort)
-    pipeline = AgentPipeline.from_config(
-        PipelineConfig(llm=llm, model_id=None, defense=defense, system_message_name=None, system_message=None)
-    )
+    pipeline = build_pipeline(llm, defense)
 
     for suite_name in suites:
         suite = get_suite(BENCHMARK_VERSION, suite_name)

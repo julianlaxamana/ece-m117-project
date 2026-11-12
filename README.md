@@ -65,3 +65,11 @@ cd viz && npm install && npm run dev   # http://localhost:3000
 ```
 
 It reads `../runs` on every request (set `RUNS_DIR` to point elsewhere), so new benchmark results show up on refresh.
+
+### Live page
+
+`/live` runs one task at a time from the browser and streams it like a chat: the attacker's planted payload, each target-agent step (with a typing indicator while the model works), tool results, any messages a defense adds, and the final verdict. Pick the suite, user task, one of AgentDojo's built-in attacks, the attacker goal (injection task) and a defense, then press **Run** (**Stop** kills the run).
+
+Under the hood the page calls `POST /api/run`, which starts `stream_run.py` and streams its JSON-lines events. Finished runs are saved to `runs/` like benchmark runs; a stopped run is discarded, so it never overwrites an earlier result. The dev server listens on 127.0.0.1 only, since this endpoint starts processes on your machine.
+
+Results vary between identical runs (in testing, the same `tool_filter` run flipped between hijacked and resisted), so repeat runs before drawing conclusions.

@@ -5,7 +5,7 @@ import { listRuns, RUNS_DIR, type RunSummary } from "@/lib/runs";
 export default function Home() {
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-semibold">Injection Viewer</h1>
+      <h1 className="text-2xl font-semibold">Runs</h1>
       <p className="mt-1 text-sm text-muted">
         AgentDojo runs: what the attacker planted, what the target agent did, and whether the attack worked.
       </p>
@@ -105,7 +105,7 @@ async function Runs() {
               </span>
               <span className="ml-auto flex gap-1.5">
                 {r.utility === null && (
-                  <span className="rounded-full bg-tool-bg px-2 py-0.5 text-xs text-muted">running…</span>
+                  <span className="rounded-full bg-tool-bg px-2 py-0.5 text-xs text-muted" title="No result recorded: still running, or stopped early">incomplete</span>
                 )}
                 <Badge ok={r.utility} yes="task done" no="task failed" />
                 {r.attackSucceeded !== null && <Badge ok={!r.attackSucceeded} yes="resisted" no="hijacked" />}
