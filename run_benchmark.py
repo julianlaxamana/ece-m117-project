@@ -61,7 +61,9 @@ def build_llm(provider: str, model: str, reasoning_effort: str | None = None) ->
         from agentdojo.agent_pipeline.llms.openai_llm import OpenAILLM
 
         host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        client = openai.OpenAI(base_url=f"{host}/v1", api_key="ollama")
+        # AgentDojo sends `temperature=0.0 or NOT_GIVEN`, which drops 0.0, so Ollama falls back
+        # to the model's own default (0.6 for Qwen3) and runs become random. Force greedy decoding.
+        client = _ClientWithDefaults(openai.OpenAI(base_url=f"{host}/v1", api_key="ollama"), temperature=0.0)
         llm = OpenAILLM(client, model, reasoning_effort=reasoning_effort)
         prose_name = "AI assistant"
     elif provider == "claude-cli":
@@ -89,11 +91,19 @@ def build_llm(provider: str, model: str, reasoning_effort: str | None = None) ->
 
 
 class _ClientWithDefaults:
-    """An OpenAI client stand-in that adds default kwargs to chat.completions.create."""
+    """An OpenAI client stand-in that adds default kwargs to chat.completions.create.
+
+    A default is used whenever the caller omits the kwarg or passes NOT_GIVEN for it."""
 
     def __init__(self, client, **defaults):
+        from openai import NOT_GIVEN
+
         create = client.chat.completions.create
-        completions = type("Completions", (), {"create": staticmethod(lambda **kw: create(**{**defaults, **kw}))})
+
+        def create_with_defaults(**kw):
+            return create(**{**defaults, **{k: v for k, v in kw.items() if v is not NOT_GIVEN}})
+
+        completions = type("Completions", (), {"create": staticmethod(create_with_defaults)})
         self.chat = type("Chat", (), {"completions": completions})()
 
 
