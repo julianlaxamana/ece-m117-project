@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Agentic red teaming and prompt injection defenses (ECE M117)"
 requires-python = ">=3.12"
 dependencies = [
-    "agentdojo>=0.1.35",
+    "agentdojo[transformers]>=0.1.35",
     "anthropic>=0.125,<1",
     "click>=8.5.1",
     "python-dotenv>=1.2.4",
