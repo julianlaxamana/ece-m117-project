@@ -46,7 +46,7 @@ def build_llm(provider: str, model: str, reasoning_effort: str | None = None) ->
 
         from agentdojo.agent_pipeline.llms.anthropic_llm import AnthropicLLM
 
-        llm = AnthropicLLM(anthropic.Anthropic(), model)
+        llm = AnthropicLLM(anthropic.AsyncAnthropic(), model, temperature=None)
         prose_name = "Claude"
     elif provider == "openai":
         import openai
