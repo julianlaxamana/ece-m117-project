@@ -18,6 +18,7 @@ Examples:
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import click
 from dotenv import load_dotenv
@@ -64,6 +65,7 @@ def build_llm(provider: str, model: str, reasoning_effort: str | None = None) ->
         # AgentDojo sends `temperature=0.0 or NOT_GIVEN`, which drops 0.0, so Ollama falls back
         # to the model's own default (0.6 for Qwen3) and runs become random. Force greedy decoding.
         client = _ClientWithDefaults(openai.OpenAI(base_url=f"{host}/v1", api_key="ollama"), temperature=0.0)
+        client = _ReplyOnRepeatLoop(client)
         llm = OpenAILLM(client, model, reasoning_effort=reasoning_effort)
         prose_name = "AI assistant"
     elif provider == "claude-cli":
@@ -105,6 +107,35 @@ class _ClientWithDefaults:
 
         completions = type("Completions", (), {"create": staticmethod(create_with_defaults)})
         self.chat = type("Chat", (), {"completions": completions})()
+
+
+REPEAT_LOOP_REPLY = "[Ollama aborted this reply: the model got stuck repeating itself]"
+
+
+class _ReplyOnRepeatLoop:
+    """Turns Ollama's "token repeat limit reached" error into a final assistant reply.
+
+    Ollama aborts generation when the model loops on the same tokens and returns HTTP 500.
+    With temperature 0 a retry loops the same way, so instead of crashing the whole benchmark,
+    end the agent's turn with a marker reply and let AgentDojo score the run as usual.
+    """
+
+    def __init__(self, client):
+        import openai
+        from openai.types.chat import ChatCompletionMessage
+
+        create = client.chat.completions.create
+
+        def create_or_marker(**kw):
+            try:
+                return create(**kw)
+            except openai.InternalServerError as e:
+                if "repeat limit" not in str(e):
+                    raise
+                message = ChatCompletionMessage(role="assistant", content=REPEAT_LOOP_REPLY)
+                return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create_or_marker))
 
 
 def build_pipeline(llm: BasePipelineElement, defense: str | None) -> AgentPipeline:
