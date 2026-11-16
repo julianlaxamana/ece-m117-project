@@ -12,6 +12,10 @@ Examples:
 
     # Save as Markdown to paste into a report or slides
     uv run matrix_table.py results/matrix_qwen3-8b-16k-reasoning-none_banking_important_instructions.csv > table.md
+
+    # Groupmates split one model's runs (by defense or by attacker goal) and each sent a CSV:
+    # merge them into one table
+    uv run matrix_table.py --combine results/haiku_part1.csv results/haiku_part2.csv
 """
 
 import csv
@@ -38,8 +42,13 @@ def format_table(rows: list[dict]) -> str:
     table = []
     for d in defenses:
         rs = [r for r in rows if r["defense"] == d]
-        # Baseline utility counts each (user task, repeat) once, not once per injection task.
-        base = {(r["user_task"], r["repeat"]): r["baseline_utility"] for r in rs if r["baseline_utility"] is not None}
+        # Baseline utility counts each (user task, repeat) once per source file, not once per
+        # injection task. When combined CSVs each ran the same baselines, each run counts.
+        base = {
+            (r.get("source"), r["user_task"], r["repeat"]): r["baseline_utility"]
+            for r in rs
+            if r["baseline_utility"] is not None
+        }
         table.append([
             d,
             pct(sum(base.values()), len(base)),
@@ -75,12 +84,31 @@ def read_rows(path: Path) -> list[dict]:
 
 @click.command()
 @click.argument("csv_files", nargs=-1, required=True)
-def main(csv_files):
+@click.option("--combine", is_flag=True,
+              help="Merge all CSVs into one table (for one model's runs split across people)")
+def main(csv_files, combine):
     # PowerShell doesn't expand wildcards like results/*.csv, so do it here.
     paths = [Path(p) for pattern in csv_files for p in (sorted(glob.glob(pattern)) or [pattern])]
-    for i, path in enumerate(paths):
+    for path in paths:
         if not path.is_file():
             raise click.BadParameter(f"no such file: {path}")
+
+    if combine:
+        rows = []
+        for path in paths:
+            part = read_rows(path)
+            for r in part:
+                r["source"] = path.name
+            rows += part
+        keys = [(r["defense"], r["repeat"], r["user_task"], r["injection_task"]) for r in rows]
+        if len(keys) != len(set(keys)):
+            click.echo("Warning: some runs appear in more than one CSV and are counted more than once.\n")
+        click.echo(f"combined: {', '.join(p.name for p in paths)}\n")
+        click.echo(format_table(rows) if rows else "(no rows)")
+        click.echo(f"\n{FOOTNOTE}")
+        return
+
+    for i, path in enumerate(paths):
         rows = read_rows(path)
         if i:
             click.echo()
