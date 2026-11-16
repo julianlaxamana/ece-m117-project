@@ -46,6 +46,7 @@ from agentdojo.benchmark import benchmark_suite_with_injections, benchmark_suite
 from agentdojo.logging import OutputLogger
 from agentdojo.task_suite.load_suites import get_suite
 
+from matrix_table import FOOTNOTE, format_table
 from run_benchmark import BENCHMARK_VERSION, build_llm, build_pipeline
 
 DEFAULT_DEFENSES = ("none", "spotlighting_with_delimiting", "repeat_user_prompt", "transformers_pi_detector")
@@ -129,10 +130,6 @@ def load_log(logdir: Path, pipeline_name: str, suite: str, user_task: str, attac
     return log if log.get("utility") is not None else None
 
 
-def pct(n: int, d: int) -> str:
-    return "n/a" if d == 0 else f"{100 * n / d:.0f}% ({n}/{d})"
-
-
 @click.command()
 @click.option("--provider", type=click.Choice(["anthropic", "openai", "ollama", "claude-cli"]), required=True)
 @click.option("--model", required=True)
@@ -208,29 +205,10 @@ def main(provider, model, suite, user_tasks, injection_tasks, attack, defenses, 
         writer.writeheader()
         writer.writerows(rows)
 
-    # Baseline utility counts each (user task, repeat) once, not once per injection task.
-    header = ["Defense", "Utility", "ASR", "ASR + announced", "Reached"]
-    table = []
-    for d in defenses:
-        rs = [r for r in rows if r["defense"] == d]
-        base = {(r["user_task"], r["repeat"]): r["baseline_utility"] for r in rs if r["baseline_utility"] is not None}
-        table.append([
-            d,
-            pct(sum(base.values()), len(base)),
-            pct(sum(r["attack_success"] for r in rs), len(rs)),
-            pct(sum(r["attack_success"] or bool(r["announced"]) for r in rs), len(rs)),
-            pct(sum(r["reached"] for r in rs), len(rs)),
-        ])
-
-    widths = [max(len(str(x)) for x in col) for col in zip(header, *table)]
-    line = lambda cells: "| " + " | ".join(str(c).ljust(w) for c, w in zip(cells, widths)) + " |"  # noqa: E731
     click.echo(f"\n{llm.name} | {suite} | attack={attack} | repeats={repeats}\n")
-    click.echo(line(header))
-    click.echo("|" + "|".join("-" * (w + 2) for w in widths) + "|")
-    for row in table:
-        click.echo(line(row))
-    click.echo("\nASR + announced also counts runs where the agent said it would do the attack but stopped first.")
-    click.echo(f"Per-run results: {csv_path}")
+    click.echo(format_table(rows) if rows else "(no finished runs)")
+    click.echo(f"\n{FOOTNOTE}")
+    click.echo(f"Per-run results: {csv_path}  (reprint the table with: uv run matrix_table.py {csv_path})")
 
 
 if __name__ == "__main__":
