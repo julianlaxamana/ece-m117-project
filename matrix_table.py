@@ -16,6 +16,10 @@ Examples:
     # Groupmates split one model's runs (by defense or by attacker goal) and each sent a CSV:
     # merge them into one table
     uv run matrix_table.py --combine results/haiku_part1.csv results/haiku_part2.csv
+
+    # Only count attacks on clean-pass tasks: the user tasks the agent completes with no
+    # attack and no defense. The same tasks are used for every defense. Works with --combine.
+    uv run matrix_table.py --capable results/matrix_qwen3-8b-16k-reasoning-none_banking_important_instructions.csv
 """
 
 import csv
@@ -32,11 +36,13 @@ def pct(n: int, d: int) -> str:
     return "n/a" if d == 0 else f"{100 * n / d:.0f}% ({n}/{d})"
 
 
-def format_table(rows: list[dict]) -> str:
+def format_table(rows: list[dict], utility_rows: list[dict] | None = None) -> str:
     """Summarize per-run rows (as defense_matrix.py builds them) into a Markdown table.
 
     Each row needs: defense, repeat, user_task, baseline_utility, attack_success, reached,
     announced. Booleans may be None when unknown. Defenses keep their order of appearance.
+    The Utility column is computed from `utility_rows` when given (e.g. all tasks, while the
+    attack columns use a filtered subset), otherwise from `rows`.
     """
     defenses = list(dict.fromkeys(r["defense"] for r in rows))
     table = []
@@ -46,8 +52,8 @@ def format_table(rows: list[dict]) -> str:
         # injection task. When combined CSVs each ran the same baselines, each run counts.
         base = {
             (r.get("source"), r["user_task"], r["repeat"]): r["baseline_utility"]
-            for r in rs
-            if r["baseline_utility"] is not None
+            for r in (utility_rows if utility_rows is not None else rows)
+            if r["defense"] == d and r["baseline_utility"] is not None
         }
         table.append([
             d,
@@ -82,11 +88,47 @@ def read_rows(path: Path) -> list[dict]:
     return rows
 
 
+def clean_pass_tasks(rows: list[dict]) -> list[str] | None:
+    """User tasks the agent completed with no attack and no defense, or None without a 'none' row.
+
+    With several repeats or combined CSVs, a task counts only if every recorded no-defense
+    baseline for it passed.
+    """
+    results: dict[str, list[bool]] = {}
+    for r in rows:
+        if r["defense"] == "none" and r["baseline_utility"] is not None:
+            results.setdefault(r["user_task"], []).append(r["baseline_utility"])
+    if not results:
+        return None
+    return sorted((t for t, ok in results.items() if all(ok)), key=lambda t: int(t.rsplit("_", 1)[-1]))
+
+
+def print_table(title: str, rows: list[dict], capable: bool) -> None:
+    click.echo(f"{title}\n")
+    if not rows:
+        click.echo("(no rows)")
+        return
+    if not capable:
+        click.echo(format_table(rows))
+        return
+    tasks = clean_pass_tasks(rows)
+    if tasks is None:
+        click.echo("--capable needs the no-defense runs ('none'), which this data doesn't have.")
+        return
+    kept = [r for r in rows if r["user_task"] in tasks]
+    click.echo(f"Capability-qualified: attacks on the {len(tasks)} clean-pass tasks only "
+               f"({', '.join(t.removeprefix('user_task_') for t in tasks)}), same tasks for every defense.")
+    click.echo("Utility is still measured on all tasks.\n")
+    click.echo(format_table(kept, utility_rows=rows) if kept else "(no attacks on clean-pass tasks)")
+
+
 @click.command()
 @click.argument("csv_files", nargs=-1, required=True)
 @click.option("--combine", is_flag=True,
               help="Merge all CSVs into one table (for one model's runs split across people)")
-def main(csv_files, combine):
+@click.option("--capable", is_flag=True,
+              help="Only count attacks on tasks the agent completes with no attack and no defense")
+def main(csv_files, combine, capable):
     # PowerShell doesn't expand wildcards like results/*.csv, so do it here.
     paths = [Path(p) for pattern in csv_files for p in (sorted(glob.glob(pattern)) or [pattern])]
     for path in paths:
@@ -103,17 +145,14 @@ def main(csv_files, combine):
         keys = [(r["defense"], r["repeat"], r["user_task"], r["injection_task"]) for r in rows]
         if len(keys) != len(set(keys)):
             click.echo("Warning: some runs appear in more than one CSV and are counted more than once.\n")
-        click.echo(f"combined: {', '.join(p.name for p in paths)}\n")
-        click.echo(format_table(rows) if rows else "(no rows)")
+        print_table(f"combined: {', '.join(p.name for p in paths)}", rows, capable)
         click.echo(f"\n{FOOTNOTE}")
         return
 
     for i, path in enumerate(paths):
-        rows = read_rows(path)
         if i:
             click.echo()
-        click.echo(f"{path.stem.removeprefix('matrix_')}\n")
-        click.echo(format_table(rows) if rows else "(no rows)")
+        print_table(path.stem.removeprefix("matrix_"), read_rows(path), capable)
     click.echo(f"\n{FOOTNOTE}")
 
 
